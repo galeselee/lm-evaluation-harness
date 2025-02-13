@@ -426,6 +426,7 @@ def evaluate(
 
     # get lists of group hierarchy and each type of request
     eval_tasks = get_task_list(task_dict)
+    print("eval_task", eval_tasks)
     if not log_samples:
         if not all(
             "bypass" not in getattr(task_output.task, "_metric_fn_list", {}).keys()
@@ -460,6 +461,8 @@ def evaluate(
     # Cache the limit arg.
     limit_arg = limit
     limits = []
+
+    print("limits task")
     for task_output in eval_tasks:
         task: Task = task_output.task
 
@@ -509,6 +512,7 @@ def evaluate(
 
     ### Run LM on inputs, get all outputs ###
     # execute each type of request
+    print("reqtype")
     for reqtype, reqs in requests.items():
         eval_logger.info(f"Running {reqtype} requests")
         # create `K` copies of each request `req` based off `K = req.repeats`
@@ -519,8 +523,8 @@ def evaluate(
         if (lm.world_size > 1) and (padding_requests[reqtype] > 0):
             for _ in range(padding_requests[reqtype]):
                 cloned_reqs.extend([req] * req.repeats)
-
         # run requests through model
+        print(reqtype)
         resps = getattr(lm, reqtype)(cloned_reqs)
 
         # put responses from model into a list of length K for each request.
@@ -534,6 +538,7 @@ def evaluate(
     WORLD_SIZE = lm.world_size
     ### Postprocess outputs ###
     # TODO: del model here, maybe (idea: allow user to specify device of e.g. reward model separately)
+    print("taskoutput")
     for task_output, limit in zip(eval_tasks, limits):
         task = task_output.task
         task.apply_filters()

@@ -37,7 +37,10 @@ from lm_eval.models.utils import (
     pad_and_concat,
     stop_sequences_criteria,
 )
-
+from longvptq.vqmodels.llama2 import VQLlama2
+from longvptq.vqmodels.llama3 import VQLlama3
+from longvptq.vqmodels.llama31 import VQLlama31
+from longvptq.vqmodels.mistral import VQMistral
 
 eval_logger = utils.eval_logger
 
@@ -293,6 +296,22 @@ class HFLM(TemplateLM):
             eval_logger.info(
                 f"Loglikelihood prefix token id used in evaluation: {self.prefix_token_id}"
             )
+        print("HFLM initialized")
+        self.antkv_model = VQLlama2.build(
+                ckpt_dir="/home/aiscuser/models/Llama-2-7b",
+                tokenizer_path="/home/aiscuser/models/Llama-2-7b/tokenizer.model",
+                max_seq_len=4096,
+                max_batch_size=1,
+                vq_cache_k="/home/aiscuser/data/longvptq/llama2/redpajama/vq_cache_weighted_16/centroids_256_productdim_4",
+                vq_cache_v="/home/aiscuser/data/longvptq/llama2/redpajama/vq_cache_weighted_16/centroids_256_productdim_4",
+                product_dim_k=4,
+                product_dim_v=4,
+                vq_type="kv",
+                k_factor_num=0.01,
+                v_factor_num=0.01,
+                k_window_size=16,
+                v_window_size=16,
+            ).model
 
     def _get_accelerate_args(
         self,
@@ -874,7 +893,7 @@ class HFLM(TemplateLM):
                 ).logits
             else:
                 assert self.AUTO_MODEL_CLASS == transformers.AutoModelForCausalLM
-                return self.model(inps).logits
+                return self.antkv_model(inps,0, )
 
     def _model_generate(self, context, max_length, stop, **generation_kwargs):
         # temperature = 0.0 if not set
@@ -1088,7 +1107,7 @@ class HFLM(TemplateLM):
             disable=(disable_tqdm or (self.rank != 0)),
             desc="Running loglikelihood requests",
         )
-        for chunk in chunks:
+        for idx, chunk in enumerate(chunks):
             inps = []
             cont_toks_list = []
             inplens = []
@@ -1258,6 +1277,7 @@ class HFLM(TemplateLM):
         self, requests: List[Instance], disable_tqdm: bool = False
     ) -> List[str]:
         res = []
+        print("entry generate until")
 
         def _collate(req: Tuple[str, dict]):
             """Defines the key for the sorted method"""
@@ -1290,6 +1310,7 @@ class HFLM(TemplateLM):
             if adaptive_batch_size is not None
             else 0
         )
+
         batch_fn = (
             self._batch_scheduler
             if self.batch_size == "auto" and not adaptive_batch_size
@@ -1357,6 +1378,9 @@ class HFLM(TemplateLM):
                 stop=until,
                 **kwargs,
             )
+            print(cont.shape)
+            print(context_enc.shape)
+            exit()
 
             cont_toks_list = cont.tolist()
             for cont_toks, context in zip(cont_toks_list, contexts):
