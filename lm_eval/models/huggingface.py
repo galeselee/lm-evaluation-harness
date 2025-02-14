@@ -37,10 +37,27 @@ from lm_eval.models.utils import (
     pad_and_concat,
     stop_sequences_criteria,
 )
-from longvptq.vqmodels.llama2 import VQLlama2
-from longvptq.vqmodels.llama3 import VQLlama3
-from longvptq.vqmodels.llama31 import VQLlama31
-from longvptq.vqmodels.mistral import VQMistral
+# from longvptq.vqmodels.llama2 import VQLlama2
+# from longvptq.vqmodels.llama3 import VQLlama3
+# from longvptq.vqmodels.llama31 import VQLlama31
+# from longvptq.vqmodels.mistral import VQMistral
+# from cq.cqmodels.llama2 import VQLlama2
+# from cq.cqmodels.llama3 import VQLlama3
+# from cq.cqmodels.llama31 import VQLlama31
+# from cq.cqmodels.mistral import VQMistral
+# from kvquant.modelutils import *
+# from kvquant.datautils import *
+# from kvquant.simquant_module_quantizer import *
+
+# from kvquant.model_parse import (
+#     parse_model,
+#     get_layers,
+#     get_embedding,
+#     get_norm,
+# )
+import pickle
+import math
+import json
 
 eval_logger = utils.eval_logger
 
@@ -97,6 +114,8 @@ class HFLM(TemplateLM):
         **kwargs,
     ) -> None:
         super().__init__()
+        self.total_token = 0
+        self.token_100 = 0
         # optionally: take in an already-initialized transformers.PreTrainedModel
         if not isinstance(pretrained, str):
             eval_logger.warning(
@@ -297,21 +316,122 @@ class HFLM(TemplateLM):
                 f"Loglikelihood prefix token id used in evaluation: {self.prefix_token_id}"
             )
         print("HFLM initialized")
-        self.antkv_model = VQLlama2.build(
-                ckpt_dir="/home/aiscuser/models/Llama-2-7b",
-                tokenizer_path="/home/aiscuser/models/Llama-2-7b/tokenizer.model",
-                max_seq_len=4096,
-                max_batch_size=1,
-                vq_cache_k="/home/aiscuser/data/longvptq/llama2/redpajama/vq_cache_weighted_16/centroids_256_productdim_4",
-                vq_cache_v="/home/aiscuser/data/longvptq/llama2/redpajama/vq_cache_weighted_16/centroids_256_productdim_4",
-                product_dim_k=4,
-                product_dim_v=4,
-                vq_type="kv",
-                k_factor_num=0.01,
-                v_factor_num=0.01,
-                k_window_size=16,
-                v_window_size=16,
-            ).model
+        # self.cq = VQLlama3.build(
+        #         ckpt_dir="/home/aiscuser/models/Meta-Llama-3-8B/original",
+        #         tokenizer_path="/home/aiscuser/models/Meta-Llama-3-8B/original/tokenizer.model",
+        #         max_seq_len=8192,
+        #         max_batch_size=1,
+        #         # vq_cache_k="/home/aiscuser/data/longvptq/redpajama/vq_cache_weighted_16/centroids_256_productdim_8",
+        #         # vq_cache_v="/home/aiscuser/data/longvptq/redpajama/vq_cache_weighted_16/centroids_256_productdim_8",
+        #         vq_cache_k="/home/aiscuser/data/cq/centroids/llama3/redpajama/centroids_256_productdim_8",
+        #         vq_cache_v="/home/aiscuser/data/cq/centroids/llama3/redpajama/centroids_256_productdim_8",
+        #         product_dim_k=8,
+        #         product_dim_v=8,
+        #         vq_type="kv",
+        #         k_factor_num=0,
+        #         v_factor_num=0,
+        #         k_window_size=0,
+        #         v_window_size=0,
+        #     )
+        # self.cq_model = self.cq.model
+        # self.antkv_model = self.antkv.model
+        # self.kvquant_model = self.kvquant_get_model("/home/aiscuser/models/Meta-Llama-3-8B/", 4096, 8192)
+        # self.kvquant_model = self.kvquant_model.half()
+        # with open("/home/aiscuser/workspace/kvquant/quant/quantizers.pickle.llama3.sparse.redpajama.2bit", 'rb') as handle:
+        #     quantizers = pickle.load(handle)
+
+        # perchannelquant = {}
+        # pertokenquant = {}
+        # perchannel_match = ["k_proj"] 
+        # pertoken_match = ["v_proj"]
+        # for k in quantizers.keys():
+        #     for p in perchannel_match:
+        #         if p in k:
+        #             perchannelquant[k] = quantizers[k]
+
+        #     for p in pertoken_match:
+        #         if p in k:
+        #             pertokenquant[k] = quantizers[k]
+        # make_quant_sim(
+        #     self.kvquant_model,
+        #     perchannelquant,
+        #     2,
+        #     perchannel=True,
+        #     include_sparse=True,
+        #     sparsity_threshold=0.99,
+        #     dynamicquantization=False,
+        #     nuq=True,
+        #     nf_nuq=False,
+        #     norm=False,
+        #     cap_outliers=-1,
+        #     first_few_fp16=1,
+        #     clamp=False
+        # )
+
+        # #per-vector quant
+        # make_quant_sim(
+        #     self.kvquant_model,
+        #     pertokenquant,
+        #     2,
+        #     perchannel=False,
+        #     include_sparse=True,
+        #     sparsity_threshold=0.99,
+        #     dynamicquantization=True,
+        #     nuq=True,
+        #     nf_nuq=False,
+        #     norm=False,
+        #     cap_outliers=-1,
+        #     first_few_fp16=1,
+        #     clamp=False
+        # )
+
+
+    def kvquant_get_model(self, model, seqlen, maxseqlen):
+        import torch
+        def skip(*args, **kwargs):
+            pass
+        torch.nn.init.kaiming_uniform_ = skip
+        torch.nn.init.uniform_ = skip
+        torch.nn.init.normal_ = skip
+
+        # Set RoPE scaling factor
+        from transformers import AutoConfig
+        config = AutoConfig.from_pretrained(model)
+        context_size = maxseqlen
+        orig_ctx_len = getattr(config, "max_position_embeddings", None) # this value should be 4096 for LLaMA2 models
+        if orig_ctx_len and context_size > orig_ctx_len:
+            scaling_factor = float(math.ceil(context_size / orig_ctx_len))
+            config.rope_scaling = {"type": "linear", "factor": scaling_factor}
+
+        from transformers import AutoModelForCausalLM
+        model = AutoModelForCausalLM.from_pretrained(model, config=config, use_flash_attention_2=True, torch_dtype=torch.half)
+        def get_model_weights_size(model):
+            weights_size = {}
+            total_size = 0
+            for name, param in model.named_parameters():
+                size_in_bytes = param.numel() * param.element_size()
+                size_in_mb = size_in_bytes / (1024 ** 2)  # Convert to MB
+                weights_size[name] = size_in_mb
+                total_size += size_in_mb
+            return weights_size, total_size
+
+        def get_model_memory_usage(model):
+            param_size = 0
+            for param in model.parameters():
+                param_size += param.nelement() * param.element_size()  # 参数总字节数
+            buffer_size = 0
+            for buffer in model.buffers():
+                buffer_size += buffer.nelement() * buffer.element_size()  # 缓冲区总字节数
+            total_size = param_size + buffer_size
+            return param_size, buffer_size, total_size
+
+        weights_size, total_size = get_model_weights_size(model)
+        model=model.cuda()
+
+        model.seqlen = seqlen  #TODO
+        if config.vocab_size == 32001:
+            model.resize_token_embeddings(32001)
+        return model
 
     def _get_accelerate_args(
         self,
@@ -893,7 +1013,11 @@ class HFLM(TemplateLM):
                 ).logits
             else:
                 assert self.AUTO_MODEL_CLASS == transformers.AutoModelForCausalLM
-                return self.antkv_model(inps,0, )
+                return self.antkv_model(inps, 0, "ppl")
+                # return self.kvquant_model(inps).logits
+                # self.total_token += inps.shape[1]
+                # self.token_100 += inps.shape[1] // 100
+                # return self.model(inps).logits
 
     def _model_generate(self, context, max_length, stop, **generation_kwargs):
         # temperature = 0.0 if not set
@@ -921,6 +1045,41 @@ class HFLM(TemplateLM):
             use_cache=True,
             **generation_kwargs,
         )
+        # print(self.model.generate(
+        #     input_ids=context,
+        #     max_length=max_length,
+        #     stopping_criteria=stopping_criteria,
+        #     pad_token_id=self.tokenizer.pad_token_id,
+        #     use_cache=True,
+        #     **generation_kwargs,
+        # ))
+        # print(self.model.generate(
+        #     input_ids=context,
+        #     max_length=max_length,
+        #     stopping_criteria=stopping_criteria,
+        #     pad_token_id=self.tokenizer.pad_token_id,
+        #     use_cache=True,
+        #     **generation_kwargs,
+        # ).shape)
+        # return self.kvquant_model.generate(
+        #     input_ids=context,
+        #     max_length=max_length,
+        #     stopping_criteria=stopping_criteria,
+        #     pad_token_id=self.tokenizer.pad_token_id,
+        #     use_cache=True,
+        #     **generation_kwargs,
+        # )
+
+        # return self.antkv.generate(
+        #     prompt_tokens = context,
+        #     max_gen_len=256,
+        #     temperature=0.0
+        # )
+        # return self.cq.generate(
+        #     prompt_tokens = context,
+        #     max_gen_len=256,
+        #     temperature=0.0
+        # )
 
     def _select_cont_toks(
         self, logits: torch.Tensor, contlen: int = None, inplen: int = None
@@ -1378,9 +1537,7 @@ class HFLM(TemplateLM):
                 stop=until,
                 **kwargs,
             )
-            print(cont.shape)
-            print(context_enc.shape)
-            exit()
+            print("mark")
 
             cont_toks_list = cont.tolist()
             for cont_toks, context in zip(cont_toks_list, contexts):
