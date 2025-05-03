@@ -38,10 +38,8 @@ from lm_eval.models.utils import (
     pad_and_concat,
     stop_sequences_criteria,
 )
-# from longvptq.vqmodels.llama2 import VQLlama2
-# from longvptq.vqmodels.llama3 import VQLlama3
-# from longvptq.vqmodels.llama31 import VQLlama31
-# from longvptq.vqmodels.mistral import VQMistral
+
+
 # from cq.cqmodels.llama2 import VQLlama2
 # from cq.cqmodels.llama3 import VQLlama3
 # from cq.cqmodels.llama31 import VQLlama31
@@ -62,6 +60,36 @@ import json
 
 eval_logger = logging.getLogger(__name__)
 
+def model_choice(ckpt_dir, tokenizer_path, max_seq_len,
+                max_batch_size, vq_cache_k, vq_cache_v,
+                product_dim_k, product_dim_v, vq_type,
+                factor_num_k, factor_num_v, window_size_k, window_size_v, model):
+    if "llama3" in model:
+        from antkv.antmodels.llama3 import AnTLlama3
+        model_dir = os.path.dirname(ckpt_dir.rstrip('/'))
+        Model = AnTLlama3
+    elif "mistral" in model:
+        from antkv.antmodels.mistral import AnTMistral
+        model_dir = ckpt_dir
+        Model = AnTMistral
+    else:
+        assert False, "model not supported"
+    generator = Model.build(
+        ckpt_dir=ckpt_dir,
+        tokenizer_path=tokenizer_path,
+        max_seq_len=max_seq_len,
+        max_batch_size=max_batch_size,
+        vq_cache_k=vq_cache_k,
+        vq_cache_v=vq_cache_v,
+        product_dim_k=product_dim_k,
+        product_dim_v=product_dim_v,
+        vq_type=vq_type,
+        factor_num_k=factor_num_k,
+        factor_num_v=factor_num_v,
+        window_size_k=window_size_k,
+        window_size_v=window_size_v,
+    )
+    return generator
 
 @register_model("hf-auto", "hf", "huggingface")
 class HFLM(TemplateLM):
@@ -323,6 +351,23 @@ class HFLM(TemplateLM):
                 f"Loglikelihood prefix token id used in evaluation: {self.prefix_token_id}"
             )
         print("HFLM initialized")
+
+        self.antmodel = model_choice(
+            ckpt_dir="/data/llama-3/llama-3-8B-Instruct/original",
+            tokenizer_path="/data/llama-3/llama-3-8B-Instruct/original/tokenizer.model",
+            max_seq_len=8192,
+            vq_cache_k="/data/zeyu/antkv/llama3Instruct/wikitext2/centroids/centroids_256_productdim_2",
+            vq_cache_v="/data/zeyu/antkv/llama3Instruct/wikitext2/centroids/centroids_256_productdim_2",
+            product_dim_k=2,
+            product_dim_v=2,
+            vq_type="kv",
+            factor_num_k=32,
+            factor_num_v=32,
+            window_size_k=0,
+            window_size_v=0,
+            max_batch_size=1,
+            model="llama3",
+        )
         # self.cq = VQLlama3.build(
         #         ckpt_dir="/home/aiscuser/models/Meta-Llama-3-8B/original",
         #         tokenizer_path="/home/aiscuser/models/Meta-Llama-3-8B/original/tokenizer.model",
@@ -1030,7 +1075,13 @@ class HFLM(TemplateLM):
                 ).logits
             else:
                 assert self.AUTO_MODEL_CLASS == transformers.AutoModelForCausalLM
-                return self.antkv_model(inps, 0, "ppl")
+                # a = self.model(inps).logits
+                # print(a.shape)
+                b = self.antmodel.model(inps, 0, "ppl")[0].unsqueeze(0)
+                return b
+                # print(b.shape)
+                # exit()
+                # return self.antmodel.model(inps, 0, "ppl")[0]
                 # return self.kvquant_model(inps).logits
                 # self.total_token += inps.shape[1]
                 # self.token_100 += inps.shape[1] // 100
@@ -1054,14 +1105,14 @@ class HFLM(TemplateLM):
         stopping_criteria = stop_sequences_criteria(
             self.tokenizer, stop, context.shape[1], context.shape[0]
         )
-        return self.model.generate(
-            input_ids=context,
-            max_length=max_length,
-            stopping_criteria=stopping_criteria,
-            pad_token_id=self.tokenizer.pad_token_id,
-            use_cache=True,
-            **generation_kwargs,
-        )
+        # return self.model.generate(
+        #     input_ids=context,
+        #     max_length=max_length,
+        #     stopping_criteria=stopping_criteria,
+        #     pad_token_id=self.tokenizer.pad_token_id,
+        #     use_cache=True,
+        #     **generation_kwargs,
+        # )
         # print(self.model.generate(
         #     input_ids=context,
         #     max_length=max_length,
@@ -1087,11 +1138,11 @@ class HFLM(TemplateLM):
         #     **generation_kwargs,
         # )
 
-        # return self.antkv.generate(
-        #     prompt_tokens = context,
-        #     max_gen_len=256,
-        #     temperature=0.0
-        # )
+        return self.antmodel.generate(
+            prompt_tokens = context,
+            max_gen_len=256,
+            temperature=0.0
+        )[0]
         # return self.cq.generate(
         #     prompt_tokens = context,
         #     max_gen_len=256,
@@ -1556,9 +1607,9 @@ class HFLM(TemplateLM):
                 stop=until,
                 **kwargs,
             )
-            print("mark")
 
-            cont_toks_list = cont.tolist()
+            # cont_toks_list = cont.tolist()
+            cont_toks_list = cont
             for cont_toks, context in zip(cont_toks_list, contexts):
                 # discard context + left-padding toks if using causal decoder-only LM
                 if self.backend == "causal":
